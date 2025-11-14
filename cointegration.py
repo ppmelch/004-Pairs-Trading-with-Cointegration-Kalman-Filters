@@ -94,3 +94,5 @@ def select_pairs(prices: pd.DataFrame, corr_threshold: float = 0.7, adf_alpha: f
     ).reset_index(drop=True).head(10)
 
     return top5
+
+
