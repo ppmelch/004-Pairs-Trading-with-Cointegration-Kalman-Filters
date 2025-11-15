@@ -19,27 +19,21 @@ tickers = [
     'XOM', 'CVX', 'COP', 'SLB', 'EOG',
 
     # Consumer Discretionary
-    'AMZN', 'TSLA', 'HD', 'NKE', 'MCD',
+    'AMZN', 'TSLA', 'HD', 'NKE', 'MCD', "LOW" ,
 
     # Industrials
-    'CAT', 'HON', 'GE', 'BA', 'UPS'
+    'CAT', 'HON', 'GE', 'BA', 'UPS', "MA" , "V"
 ]
 
 def cointegration():
 
     data_pairs = clean_data(tickers, intervalo="15y")
-    train, test, validation = dataset_split(data_pairs)
+    data_train = dataset_split(data_pairs)
 
 
-    pairs = select_pairs(train, corr_threshold=0.6, adf_alpha=0.05)
+    pairs = select_pairs(data_train, corr_threshold=0.6, adf_alpha=0.05)
     print("======== PARES SELECCIONADOS ========")
     print(pairs)
-
-
-
-
-
-
 
 if __name__ == "__main__":
     cointegration()

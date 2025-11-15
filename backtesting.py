@@ -1,220 +1,222 @@
-from libraries import *
+import numpy as np
+import pandas as pd
+from classes import config, Position
 from kalman import KalmanFilter
-from classes import Position, config
-from statsmodels.tsa.vector_ar.vecm import coint_johansen
+from statsmodels.tsa.stattools import adfuller
 
-def get_portfolio_value(cash, active_long_ops, active_short_ops, y, x):
-
-    val = cash
-
-    # LONG POSITIONS – simple mark to market
-    for pos in active_long_ops:
-        if pos.ticker == "Y":
-            val += pos.n_shares * y
-        elif pos.ticker == "X":
-            val += pos.n_shares * x
-
-    # SHORT POSITIONS – academic PNL model: (open - current) * shares
-    for pos in active_short_ops:
-        if pos.ticker == "Y":
-            val += (pos.entry_price - y) * pos.n_shares
-        elif pos.ticker == "X":
-            val += (pos.entry_price - x) * pos.n_shares
-
-    return val
+def get_portfolio_value(cash, longs, shorts, y, x):
+    value = cash
+    for p in longs:
+        px = y if p.ticker == "Y" else x
+        value += p.n_shares * px
+    for p in shorts:
+        px = y if p.ticker == "Y" else x
+        value += (p.entry_price - px) * p.n_shares
+    return value
 
 
+def backtest(data: pd.DataFrame, initial_cash=None):
 
-def backtest(data: pd.DataFrame):
     data = data.copy()
+    cash = config.capital if initial_cash is None else initial_cash
 
-    # ===== PARAMS =====
-    DAYS = config.TDays              # Rolling window for Johansen & normalization
-    COM = config.COM                 # Commission per trade
-    INVEST = config.INVEST           # Fraction of capital used per trade
-    BR_daily = config.BR / DAYS            # Daily borrow cost
-    theta = config.theta             # Entry Z-threshold# Exit Z-threshold (realistic; 0.05 is too tight)
-    EXIT_TH = config.EXIT_TH
-    cash = config.capital            # Initial capital
+    COM = config.COM
+    INVEST = config.INVEST
+    ENTRY_Z = config.ENTRY_Z
+    EXIT_Z = config.EXIT_Z
+    STOP_Z = 3.5
+    BR_daily = config.BR / 252
+    WINDOW = config.TDays
 
-    # ===== KALMAN FILTERS =====
-    k1 = KalmanFilter(n=2)           # Hedge ratio
-    k2 = KalmanFilter(n=1)           # VECM smoothing
+    k_hr = KalmanFilter(n=2)
+    k_vecm = KalmanFilter(n=1)
 
-    # ===== STORAGE =====
-    vecm_hat_list = []
-    position_long = []
-    position_short = []
+    longs, shorts = [], []
     closed_positions = []
-    equity_curve = []
-    entry_idx_list = []
-    exit_idx_list = []
+    spread_history = []
+    equity = []
 
     buy = sell = hold = 0
+    total_borrow_cost = 0.0
+    total_commission_cost = 0.0
 
-    # MAIN LOOP
-    for idx, (date, row) in enumerate(data.iterrows()):
-        y = row.iloc[0]   # Asset1
-        x = row.iloc[1]   # Asset2
+    allow_entries = True
 
-        # =============================
-        # 1) KALMAN FILTER #1 — Hedge Ratio
-        # =============================
-        wp, Pp = k1.predict()
-        k1.update(np.array([1, x]), y, wp, Pp)
-        beta = k1.w_t[1]
+    for date, row in data.iterrows():
 
-        # =============================
-        # 2) JOHANSEN Rolling
-        # =============================
-        if idx < DAYS:
-            equity_curve.append(get_portfolio_value(cash, position_long, position_short, y, x))
+        y = row.iloc[0]
+        x = row.iloc[1]
+
+        # === 1. KF Hedge Ratio ===
+        w_pred, P_pred = k_hr.predict()
+        k_hr.update(np.array([1, x]), y, w_pred, P_pred)
+        beta = k_hr.w_t[1]
+
+        # === 2. Spread ===
+        spread = y - beta * x
+
+        # === 3. KF VECM ===
+        wp, Pp = k_vecm.predict()
+        k_vecm.update(np.array([1]), spread, wp, Pp)
+        spr_hat = k_vecm.w_t[0]
+        spread_history.append(spr_hat)
+
+        # === 4. Z-Score ===
+        if len(spread_history) < WINDOW:
+            equity.append(get_portfolio_value(cash, longs, shorts, y, x))
             continue
 
-        window_data = data.iloc[idx - DAYS:idx]
-        eig = coint_johansen(window_data, 0, 1)
+        mu = np.mean(spread_history[-WINDOW:])
+        sd = np.std(spread_history[-WINDOW:])
+        sd = sd if sd > 0 else 1e-6
+        z = (spr_hat - mu) / sd
 
-        e1, e2 = eig.evec[0, 0], eig.evec[1, 0]
-        vecm_t = e1 * y + e2 * x
+        # === 5. Rolling Cointegration Protection ===
+        recent = pd.Series(spread_history[-WINDOW:])
+        adf_stat, pvalue, *_ = adfuller(recent)
+        allow_entries = pvalue <= 0.05
 
-        # =============================
-        # 3) KALMAN FILTER #2 — VECM smoothing
-        # =============================
-        w2p, P2p = k2.predict()
-        k2.update(np.array([1]), vecm_t, w2p, P2p)
-        vecm_hat = k2.w_t[0]
-        vecm_hat_list.append(vecm_hat)
+        # === 6. Borrow cost ===
+        for p in shorts:
+            px = y if p.ticker == "Y" else x
+            daily_cost = p.n_shares * px * BR_daily
+            cash -= daily_cost
+            total_borrow_cost += daily_cost
 
-        # =============================
-        # 4) NORMALIZED VECM → SIGNAL
-        # =============================
-        if len(vecm_hat_list) < DAYS:
-            equity_curve.append(get_portfolio_value(cash, position_long, position_short, y, x))
-            continue
+        # === 7. STOP LOSS ===
+        if (longs or shorts) and abs(z) > STOP_Z:
 
-        window_vecm = np.array(vecm_hat_list[-DAYS:])
-        mu = window_vecm.mean()
-        sd = window_vecm.std() if window_vecm.std() > 0 else 1
-        z = (vecm_hat - mu) / sd
+            # Close longs
+            for p in longs[:]:
+                px = y if p.ticker == "Y" else x
+                com = p.n_shares * px * COM
+                pnl = (px - p.entry_price) * p.n_shares - com
 
-        # =============================
-        # 5) BORROW COST for ALL open shorts
-        # =============================
-        for pos in position_short:
-            px = x if pos.ticker == "X" else y
-            cash -= pos.n_shares * px * BR_daily
+                cash += (px * p.n_shares) - com
+                total_commission_cost += com
 
-        # ======================================================
-        # 6) EXIT LOGIC — Mean Reversion (|z| < EXIT_TH)
-        # ======================================================
-        if (position_long or position_short) and abs(z) < EXIT_TH:
-
-            # ---- Close LONGS ----
-            for pos in position_long[:]:
-                exit_px = x if pos.ticker == "X" else y
-                pnl = (exit_px - pos.entry_price) * pos.n_shares
-                cash += pos.n_shares * exit_px * (1 - COM)
-
-                pos.exit_price = exit_px
-                pos.exit_date = date
-                pos.profit = pnl
-
-                position_long.remove(pos)
-                closed_positions.append(pos)
-
-            # ---- Close SHORTS ----
-            for pos in position_short[:]:
-                exit_px = x if pos.ticker == "X" else y
-                pnl = (pos.entry_price - exit_px) * pos.n_shares
-                commission = exit_px * pos.n_shares * COM
-                cash += pnl - commission
-
-                pos.exit_price = exit_px
-                pos.exit_date = date
-                pos.profit = pnl - commission
-
-                position_short.remove(pos)
-                closed_positions.append(pos)
-
-            exit_idx_list.append(idx)
-            equity_curve.append(get_portfolio_value(cash, position_long, position_short, y, x))
-            continue
-
-        # ======================================================
-        # 7) ENTRY LOGIC — VECM Mean Reversion Signal
-        # ======================================================
-
-        total_to_invest = cash * INVEST
-        half = total_to_invest * 0.5
-
-        # ---- LONG Y / SHORT X ----
-        if z > theta and not position_long and not position_short:
-
-            n_long = int(half // (y * (1 + COM)))
-            n_short = int(n_long * abs(beta))
-            cost_comm_short = n_short * x * COM
-            cost_long = n_long * y * (1 + COM)
-
-            if n_long > 0 and n_short > 0 and cash >= cost_long + cost_comm_short:
-
-                # LONG Y
-                cash -= cost_long
-                buy += 1
-                position_long.append(Position(
-                    n_shares=n_long, ticker="Y", entry_price=y,
-                    type_of_trade="LONG", entry_date=date
-                ))
-
-                # SHORT X
-                cash -= cost_comm_short
+                p.exit_price = px
+                p.profit = pnl
+                closed_positions.append(p)
+                longs.remove(p)
                 sell += 1
-                position_short.append(Position(
-                    n_shares=n_short, ticker="X", entry_price=x,
-                    type_of_trade="SHORT", entry_date=date
-                ))
 
-                entry_idx_list.append(idx)
-                equity_curve.append(get_portfolio_value(cash, position_long, position_short, y, x))
-                continue
+            # Close shorts
+            for p in shorts[:]:
+                px = y if p.ticker == "Y" else x
+                com = p.n_shares * px * COM
+                pnl = (p.entry_price - px) * p.n_shares - com
 
-        # ---- SHORT Y / LONG X ----
-        if z < -theta and not position_long and not position_short:
+                cash += pnl
+                total_commission_cost += com
 
-            n_short = int(half // (y * (1 + COM)))
-            n_long = int(n_short * abs(beta))
-            cost_comm_short = n_short * y * COM
-            cost_long = n_long * x * (1 + COM)
-
-            if n_long > 0 and n_short > 0 and cash >= cost_long + cost_comm_short:
-
-                # LONG X
-                cash -= cost_long
-                buy += 1
-                position_long.append(Position(
-                    n_shares=n_long, ticker="X", entry_price=x,
-                    type_of_trade="LONG", entry_date=date
-                ))
-
-                # SHORT Y
-                cash -= cost_comm_short
+                p.exit_price = px
+                p.profit = pnl
+                closed_positions.append(p)
+                shorts.remove(p)
                 sell += 1
-                position_short.append(Position(
-                    n_shares=n_short, ticker="Y", entry_price=y,
-                    type_of_trade="SHORT", entry_date=date
-                ))
 
-                entry_idx_list.append(idx)
-                equity_curve.append(get_portfolio_value(cash, position_long, position_short, y, x))
-                continue
+            equity.append(get_portfolio_value(cash, longs, shorts, y, x))
+            continue
 
-        # HOLD
-        hold += 1
-        equity_curve.append(get_portfolio_value(cash, position_long, position_short, y, x))
+        # === 8. EXIT SIGNAL ===
+        if (longs or shorts) and abs(z) < EXIT_Z:
 
-    # ===== FINAL =====
-    port_series = pd.Series(equity_curve, index=data.index[:len(equity_curve)])
-    total_trades = len(closed_positions)
-    wins = sum(1 for pos in closed_positions if pos.profit > 0)
-    win_rate = wins / total_trades if total_trades > 0 else 0.0
+            # Close longs
+            for p in longs[:]:
+                px = y if p.ticker == "Y" else x
+                com = p.n_shares * px * COM
+                pnl = (px - p.entry_price) * p.n_shares - com
 
-    return port_series, cash, win_rate, buy, sell, hold, total_trades, closed_positions
+                cash += (px * p.n_shares) - com
+                total_commission_cost += com
+
+                p.exit_price = px
+                p.profit = pnl
+                closed_positions.append(p)
+                longs.remove(p)
+                sell += 1
+
+            # Close shorts
+            for p in shorts[:]:
+                px = y if p.ticker == "Y" else x
+                com = p.n_shares * px * COM
+                pnl = (p.entry_price - px) * p.n_shares - com
+
+                cash += pnl
+                total_commission_cost += com
+
+                p.exit_price = px
+                p.profit = pnl
+                closed_positions.append(p)
+                shorts.remove(p)
+                sell += 1
+
+            equity.append(get_portfolio_value(cash, longs, shorts, y, x))
+            continue
+
+        # === 9. ENTRY ===
+        if allow_entries and not longs and not shorts:
+
+            capital_to_use = cash * INVEST
+
+            # Short Y / Long X
+            if z > ENTRY_Z:
+                n = int(capital_to_use / (abs(y) + abs(beta * x)))
+                if n > 0:
+                    comY = n * y * COM
+                    comX = n * x * COM
+                    costX = n * x
+
+                    if cash >= costX + comY:
+                        cash -= costX
+                        longs.append(Position(n, "X", x, "LONG", date))
+
+                        cash -= comY
+                        shorts.append(Position(n, "Y", y, "SHORT", date))
+
+                        total_commission_cost += (comY + comX)
+                        buy += 1
+
+            # Long Y / Short X
+            elif z < -ENTRY_Z:
+                n = int(capital_to_use / (abs(y) + abs(beta * x)))
+                if n > 0:
+                    comY = n * y * COM
+                    comX = n * x * COM
+                    costY = n * y
+
+                    if cash >= costY + comX:
+                        cash -= costY
+                        longs.append(Position(n, "Y", y, "LONG", date))
+
+                        cash -= comX
+                        shorts.append(Position(n, "X", x, "SHORT", date))
+
+                        total_commission_cost += (comY + comX)
+                        buy += 1
+
+        else:
+            hold += 1
+
+        equity.append(get_portfolio_value(cash, longs, shorts, y, x))
+
+    equity = pd.Series(equity, index=data.index[:len(equity)])
+
+    win_rate = (
+        sum(p.profit > 0 for p in closed_positions) / len(closed_positions)
+        if closed_positions else 0
+    )
+
+    return (
+        equity,
+        cash,
+        win_rate,
+        buy,
+        sell,
+        hold,
+        len(closed_positions),
+        closed_positions,
+        total_borrow_cost,
+        total_commission_cost,
+    )

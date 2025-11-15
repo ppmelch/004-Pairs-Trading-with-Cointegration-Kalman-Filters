@@ -1,19 +1,35 @@
-from libraries import *
+import numpy as np
+import pandas as pd
+import statsmodels.api as sm
 from itertools import combinations
+from statsmodels.tsa.stattools import adfuller
+from statsmodels.tsa.vector_ar.vecm import coint_johansen
+
 from classes import coint_config
 
-def correlation(data, window=coint_config.window):
 
+# =====================================================
+#   ROLLING CORRELATION
+# =====================================================
+def correlation(data: pd.DataFrame, window=coint_config.window):
+    """
+    Rolling correlation entre dos activos.
+    """
     data = data.copy()
+    corr = data.iloc[:, 0].rolling(window).corr(data.iloc[:, 1])
+    return corr.rolling(window).mean()
 
-    corr = data.iloc[:, 0].rolling(window=window).corr(data.iloc[:, 1])
 
-    mean = corr.rolling(window=window).mean()
-
-    return mean
-
+# =====================================================
+#   OLS + ADF (Engle-Granger)
+# =====================================================
 def OLS(data: pd.DataFrame):
-
+    """
+    Devuelve:
+        - residuales del spread (y - beta*x)
+        - p-value del ADF
+        - residuo medio
+    """
     data = data.copy().dropna()
 
     y = data.iloc[:, 0]
@@ -21,58 +37,76 @@ def OLS(data: pd.DataFrame):
 
     model = sm.OLS(y, x).fit()
     resid = model.resid
-    mean_resid = resid.mean()  
+    mean_resid = resid.mean()
 
-    adf_pvalue = adfuller(resid, regression='c')[1]
+    adf_p = adfuller(resid, regression='c')[1]
 
-    return resid, adf_pvalue , mean_resid
+    return resid, adf_p, mean_resid
 
 
-def johansen_test(data: pd.DataFrame , det_order=coint_config.det_order, k_ar_diff=coint_config.k_ar_diff):
-
+# =====================================================
+#   JOHANSEN TEST
+# =====================================================
+def johansen_test(data: pd.DataFrame,
+                  det_order=coint_config.det_order,
+                  k_ar_diff=coint_config.k_ar_diff):
+    """
+    Devuelve dict con:
+        - eigenvector (primero)
+        - valores críticos
+        - estadístico de trazas
+    """
     data = data.copy().dropna()
-
-    result = coint_johansen(data, det_order, k_ar_diff)
+    res = coint_johansen(data, det_order, k_ar_diff)
 
     return {
-        'eigenvectors': result.evec[:, 0],
-        'critical_values': result.cvt[:, 1],  
-        'trace_stat' : result.lr1[0],
+        'eigenvectors': res.evec[:, 0],        # vector propio dominante
+        'critical_values': res.cvt[:, 1],      # valores críticos 5%
+        'trace_stat': res.lr1[0]               # estadístico trace
     }
 
 
-def select_pairs(prices: pd.DataFrame, corr_threshold: float = 0.7, adf_alpha: float = 0.05):
+# =====================================================
+#   SELECCIÓN DE PARES
+# =====================================================
+def select_pairs(prices: pd.DataFrame,
+                 corr_threshold: float = 0.7,
+                 adf_alpha: float = 0.05):
+    """
+    Para cada pareja:
+        - calcula correlación
+        - corre Engle-Granger
+        - corre Johansen
+        - normaliza eigenvector
+    """
+
     results = []
     corr_matrix = prices.corr()
 
     for a, b in combinations(prices.columns, 2):
+
         corr = corr_matrix.loc[a, b]
         if pd.isna(corr) or corr < corr_threshold:
             continue
 
         data_pair = prices[[a, b]].dropna()
 
-        # ======================
-        # 1) OLS + ADF TEST
-        # ======================
+        # ========== OLS + ADF ==========
         resid, adf_p, _ = OLS(data_pair)
 
-        # ======================
-        # 2) JOHANSEN TEST
-        # ======================
+        # ========== JOHANSEN ==========
         joh = johansen_test(data_pair)
 
-        eigenvec = joh['eigenvectors']
-        beta1 = float(eigenvec[0])
-        beta2 = float(eigenvec[1])
+        eig = joh['eigenvectors']
+        beta1, beta2 = float(eig[0]), float(eig[1])
 
         # Normalización (beta2 = 1)
-        beta1_norm = beta1 / beta2
+        beta1_norm = beta1 / beta2 if beta2 != 0 else np.nan
         beta2_norm = 1.0
 
         joh_trace = float(joh['trace_stat'])
         joh_crit = float(joh['critical_values'][0])
-        johansen_coint = joh_trace > joh_crit
+        johansen_ok = joh_trace > joh_crit
 
         results.append({
             'Asset1': a,
@@ -84,63 +118,43 @@ def select_pairs(prices: pd.DataFrame, corr_threshold: float = 0.7, adf_alpha: f
 
             'Johansen_stat': joh_trace,
             'Johansen_crit_95': joh_crit,
-            'Johansen_Cointegrated': johansen_coint,
+            'Johansen_Cointegrated': johansen_ok,
 
             'Eigenvector_1': beta1,
             'Eigenvector_2': beta2,
             'Beta1_norm': beta1_norm,
-            'Beta2_norm': beta2_norm
+            'Beta2_norm': beta2_norm,
+
+            'Johansen_strength': joh_trace - joh_crit
         })
 
     df = pd.DataFrame(results)
+    if df.empty:
+        return df
 
-    # ======================
-    #       FILTRO
-    # ======================
+    # FILTRO estricto
     mask = (
-        (df['ADF_pvalue'] < adf_alpha) &
         (df['Correlation'] >= corr_threshold) &
+        (df['ADF_pvalue'] < adf_alpha) &
         (df['ADF_Cointegrated']) &
-        (df['Johansen_Cointegrated']) &
-        (df['Johansen_stat'] > df['Johansen_crit_95'])
+        (df['Johansen_Cointegrated'])
     )
 
-    buenos = df.loc[mask].copy()
-    if buenos.empty:
-        return pd.DataFrame()
+    selected = df.loc[mask].copy()
+    if selected.empty:
+        return selected
 
-    buenos['Johansen_strength'] = buenos['Johansen_stat'] - buenos['Johansen_crit_95']
-
-    # ======================
-    #    ORDEN DE COLUMNAS
-    # ======================
-    columnas_ordenadas = [
-        'Asset1', 'Asset2',
-
-        'Correlation',
-
-        'ADF_pvalue', 'ADF_Cointegrated',
-
-        'Johansen_stat', 'Johansen_crit_95',
-        'Johansen_Cointegrated', 'Johansen_strength',
-
-        'Eigenvector_1', 'Eigenvector_2',
-        'Beta1_norm', 'Beta2_norm'
-    ]
-
-    buenos = buenos[columnas_ordenadas]
-
-    # ======================
-    #       RANKING
-    # ======================
-    top5 = buenos.sort_values(
+    # Ranking final
+    selected = selected.sort_values(
         by=['ADF_pvalue', 'Johansen_strength', 'Correlation'],
         ascending=[True, False, False]
-    ).reset_index(drop=True).head()
+    ).reset_index(drop=True)
 
-    return top5
+    return selected
 
 
-def selected_pair (data: pd.DataFrame, asset1: str, asset2: str) -> pd.DataFrame:
-    pair_data = data[[asset1, asset2]].dropna()
-    return pair_data
+# =====================================================
+#   SELECCIONA DOS ACTIVOS
+# =====================================================
+def selected_pair(data: pd.DataFrame, asset1: str, asset2: str) -> pd.DataFrame:
+    return data[[asset1, asset2]].dropna()

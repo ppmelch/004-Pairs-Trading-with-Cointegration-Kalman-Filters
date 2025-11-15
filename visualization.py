@@ -1,161 +1,276 @@
 from libraries import *
-from classes import config 
 from kalman import KalmanFilter
 
-def plot_normalized_data(data: pd.DataFrame) -> None:
-    norm_pair = (data - data.mean()) / data.std()
+import matplotlib.pyplot as plt
+import seaborn as sns
+import pandas as pd
+import numpy as np
+import statsmodels.api as sm
+from kalman import KalmanFilter
 
-    plt.figure()
-    plt.plot(norm_pair.iloc[:, 0], label=norm_pair.columns[0], color=colors[1])
-    plt.plot(norm_pair.iloc[:, 1],
-             label=norm_pair.columns[1], color=colors[2])
-    plt.title('Normalized Price Series')
-    plt.xlabel('Date')
-    plt.ylabel('Normalized Price')
+# =============================
+# COLORS (UNIFIED BLUE THEME)
+# =============================
+BLUE        = "#1D4782"
+BLUE_LIGHT  = "#5A78A1"
+BLUE_SOFT   = "#A9BBD6"
+
+sns.set_style("whitegrid")
+
+# ===============================================================
+# 1) NORMALIZED PRICE SERIES (BLUE THEME)
+# ===============================================================
+def plot_normalized_data(data: pd.DataFrame):
+    norm = (data - data.mean()) / data.std()
+
+    plt.figure(figsize=(10, 5))
+    plt.plot(norm.iloc[:, 0], label=data.columns[0], color=BLUE)
+    plt.plot(norm.iloc[:, 1], label=data.columns[1], color=BLUE_LIGHT)
+
+    plt.title("Normalized Price Series")
+    plt.xlabel("Date")
+    plt.ylabel("Z-Score Normalized")
+    plt.grid(True, alpha=0.25)
     plt.legend()
+    plt.tight_layout()
     plt.show()
 
 
-def plot_spread(data: pd.DataFrame) -> None:
-    data = data.copy()
-
+# ===============================================================
+# 2) SPREAD WITH ±1σ ±2σ BANDS (BLUE THEME)
+# ===============================================================
+def plot_spread(data: pd.DataFrame, beta_series=None):
     y = data.iloc[:, 0]
-    x = sm.add_constant(data.iloc[:, 1])
+    x = data.iloc[:, 1]
 
-    model = sm.OLS(y, x).fit()
-    residuals = model.resid
-    mean_resid = residuals.mean()
+    if beta_series is None:
+        model = sm.OLS(y, sm.add_constant(x)).fit()
+        spread = model.resid
+    else:
+        beta = beta_series.reindex(data.index).fillna(method="ffill")
+        spread = y - beta * x
 
-    plt.figure()
-    plt.plot(residuals, color=colors[0], label='Spread')
-    plt.axhline(mean_resid, color='red',
-                linestyle='--', label='Mean Spread')
-    plt.title(f'Spread -> {data.columns[0]} & {data.columns[1]}')
-    plt.xlabel('Date')
-    plt.ylabel('Spread')
-    plt.legend()
-    plt.show()
+    μ = spread.mean()
+    σ = spread.std()
 
+    plt.figure(figsize=(10, 5))
+    plt.plot(spread, color=BLUE, lw=1.4, label="Spread")
 
+    plt.axhline(μ, ls="--", color=BLUE_LIGHT, label="Mean")
+    plt.fill_between(spread.index, μ - σ, μ + σ, alpha=0.15, color=BLUE_LIGHT, label="±1σ")
+    plt.fill_between(spread.index, μ - 2*σ, μ + 2*σ, alpha=0.10, color=BLUE_SOFT, label="±2σ")
 
-def plot_test_validation(port_value_test: pd.Series, port_value_val: pd.Series) -> None:
-    """
-    Plot the test and validation portfolio curves continuously.
-
-    The test portfolio is rescaled to start at the initial capital (1,000,000),
-    and the validation portfolio begins at the final value of the test portfolio.
-
-    Parameters
-    ----------
-    port_value_test : pd.Series
-        Time series of portfolio values from the test phase.
-    port_value_val : pd.Series
-        Time series of portfolio values from the validation phase.
-
-    Returns
-    -------
-    None
-        Displays the combined test and validation performance plot.
-    """
-    plt.figure(figsize=(12, 6))
-
-    test_scaled = port_value_test / \
-        port_value_test.iloc[0] * config.capital
-    val_scaled = port_value_val / port_value_val.iloc[0] * test_scaled.iloc[-1]
-
-    x_test = range(len(test_scaled))
-    x_val = range(len(test_scaled), len(test_scaled) + len(val_scaled))
-
-    plt.plot(x_test, test_scaled, label="Test", color="royalblue", lw=2)
-    plt.plot(x_val, val_scaled, label="Validation", color="orange", lw=2)
-
-    plt.title("Test + Validation Portfolio", fontsize=14, fontweight="bold")
-    plt.xlabel("Timestep")
-    plt.ylabel("Portfolio Value ($)")
-    plt.legend()
-    plt.grid(True)
-    plt.tight_layout()
-    plt.show()
-
-
-def plot_single_split(series: pd.Series, title: str) -> None:
-    """
-    Plot a single portfolio time series.
-
-    Parameters
-    ----------
-    series : pd.Series
-        Portfolio value series to plot.
-    title : str
-        Plot title.
-
-    Returns
-    -------
-    None
-        Displays the portfolio value plot.
-    """
-    plt.figure(figsize=(12, 6))
-    plt.plot(series.values, marker="o", markersize=2,
-             linewidth=1.5, label=title)
-    plt.title(title, fontsize=14, fontweight="bold")
-    plt.xlabel("Timestep")
-    plt.ylabel("Portfolio Value ($)")
-    plt.grid(True)
+    plt.title(f"Dynamic Spread Evolution — {data.columns[0]} vs {data.columns[1]}")
+    plt.xlabel("Date")
+    plt.ylabel("Spread (y − βx)")
+    plt.grid(True, alpha=0.25)
     plt.legend()
     plt.tight_layout()
     plt.show()
 
 
-def plot_test_and_validation(test_series: pd.Series, val_series: pd.Series, title: str) -> None:
-    """
-    Plot test and validation portfolio curves on the same axis.
+# ===============================================================
+# 3) KALMAN HEDGE RATIO (BLUE THEME)
+# ===============================================================
+def plot_dynamic_hedge_ratio(data: pd.DataFrame):
+    kf = KalmanFilter(n=2)
+    betas, alphas = [], []
 
-    The validation curve starts immediately after the test curve, 
-    creating a continuous time progression between both.
+    for _, row in data.iterrows():
+        y = row.iloc[0]
+        x = row.iloc[1]
 
-    Parameters
-    ----------
-    test_series : pd.Series
-        Portfolio values from the test phase.
-    val_series : pd.Series
-        Portfolio values from the validation phase.
-    title : str
-        Plot title.
+        w_pred, P_pred = kf.predict()
+        w_upd, _ = kf.update(np.array([1, x]), y, w_pred, P_pred)
 
-    Returns
-    -------
-    None
-        Displays the combined test and validation plot.
-    """
-    plt.figure(figsize=(12, 6))
-    x_test = range(len(test_series))
-    x_val = range(len(test_series), len(test_series) + len(val_series))
+        alphas.append(w_upd[0])
+        betas.append(w_upd[1])
 
-    plt.plot(x_test, test_series.values, label="Test",
-             linewidth=1.8, marker="o", markersize=2)
-    plt.plot(x_val, val_series.values, label="Validation",
-             linewidth=1.8, marker="o", markersize=2)
+    betas = pd.Series(betas, index=data.index)
+    alphas = pd.Series(alphas, index=data.index)
 
-    plt.title(title, fontsize=14, fontweight="bold")
-    plt.xlabel("Timestep")
-    plt.ylabel("Portfolio Value ($)")
-    plt.grid(True)
+    plt.figure(figsize=(10, 5))
+    plt.plot(betas, lw=1.6, color=BLUE, label="β_t (Hedge Ratio)")
+    plt.plot(alphas, lw=1.6, color=BLUE_LIGHT, label="α_t (Intercept)")
+
+    plt.title("Dynamic Hedge Ratio (Kalman Filter)")
+    plt.xlabel("Date")
+    plt.grid(True, alpha=0.25)
+    plt.legend()
+    plt.tight_layout()
+    plt.show()
+
+    return alphas, betas
+
+
+# ===============================================================
+# 4) EIGENVECTORS (BLUE THEME)
+# ===============================================================
+def plot_kalman_eigenvectors(data: pd.DataFrame):
+    kf = KalmanFilter(n=2)
+    v1_list, v2_list = [], []
+
+    for _, row in data.iterrows():
+        p1 = float(row.iloc[0])
+        p2 = float(row.iloc[1])
+
+        # Model: v1*p1 + v2*p2 = 0
+        y_t = 0.0
+        w_pred, P_pred = kf.predict()
+        w_upd, _ = kf.update(np.array([p1, p2]), y_t, w_pred, P_pred)
+
+        v1_list.append(w_upd[0])
+        v2_list.append(w_upd[1])
+
+    v1 = pd.Series(v1_list, index=data.index)
+    v2 = pd.Series(v2_list, index=data.index)
+
+    plt.figure(figsize=(10, 5))
+    plt.plot(v1, label="V1t", color=BLUE, lw=1.6)
+    plt.plot(v2, label="V2t", color=BLUE_LIGHT, lw=1.6)
+
+    plt.title("Dynamic Estimated Eigenvectors (Kalman 2)")
+    plt.xlabel("Date")
+    plt.ylabel("Value")
+    plt.grid(True, alpha=0.25)
+    plt.legend()
+    plt.tight_layout()
+    plt.show()
+
+    return v1, v2
+
+
+# ===============================================================
+# 5) SPREAD VS VECM (BLUE THEME)
+# ===============================================================
+def plot_spread_vs_vecm(spread_series: pd.Series, vecm_series: pd.Series):
+
+    common = spread_series.index.intersection(vecm_series.index)
+    s = spread_series.loc[common]
+    v = vecm_series.loc[common]
+
+    plt.figure(figsize=(10, 5))
+    plt.plot(s, label="Spread", color=BLUE)
+    plt.plot(v, label="VECM Prediction", color=BLUE_LIGHT)
+
+    plt.title("Comparison: Spread vs Normalized VECM")
+    plt.xlabel("Date")
+    plt.grid(True, alpha=0.25)
     plt.legend()
     plt.tight_layout()
     plt.show()
 
 
+# ===============================================================
+# 6) TRADING SIGNALS (BLUE THEME)
+# ===============================================================
+def plot_trading_signals(z_series: pd.Series, long_idx, short_idx, exit_idx):
 
-def plot_eigenvectores(data):
-    
-    # ===== KALMAN FILTERS =====
-    k1 = KalmanFilter(n=2)           # Hedge ratio
-    k2 = KalmanFilter(n=1)           # VECM smoothing
+    plt.figure(figsize=(10, 5))
 
-    plt.figure(figsize=(12, 6))
-    plt.plot()
-    plt.title('Eigenvectors over Time')
-    plt.xlabel('Date')
-    plt.ylabel('Eigenvector Values')
+    plt.plot(z_series.index, z_series.values, label="Z-Score", color=BLUE)
+
+    plt.scatter(long_idx, z_series.loc[long_idx], marker="^",
+                color=BLUE, s=60, label="Long Entry")
+
+    plt.scatter(short_idx, z_series.loc[short_idx], marker="v",
+                color=BLUE_LIGHT, s=60, label="Short Entry")
+
+    plt.scatter(exit_idx, z_series.loc[exit_idx], marker="x",
+                color=BLUE_SOFT, s=80, label="Exit")
+
+    plt.axhline(1, ls="--", color=BLUE_SOFT)
+    plt.axhline(-1, ls="--", color=BLUE_SOFT)
+
+    plt.title("Trading Signals — Normalized VECM (Kalman 2)")
+    plt.xlabel("Date")
+    plt.ylabel("Z-Score")
+    plt.grid(True, alpha=0.25)
     plt.legend()
+    plt.tight_layout()
+    plt.show()
+
+
+# ===============================================================
+# 7) TRADE RETURNS HISTOGRAM (BLUE THEME)
+# ===============================================================
+def plot_trade_returns(pnl_list: list):
+
+    pnl = pd.Series(pnl_list)
+    μ = pnl.mean()
+    med = pnl.median()
+
+    plt.figure(figsize=(10, 5))
+    sns.histplot(pnl, kde=True, color=BLUE_SOFT, bins=20)
+
+    plt.axvline(μ, ls="--", color=BLUE, label=f"Mean = {μ:,.2f}")
+    plt.axvline(med, ls="--", color=BLUE_LIGHT, label=f"Median = {med:,.2f}")
+
+    plt.title("Distribution of Trade Returns")
+    plt.xlabel("PnL per Trade ($)")
+    plt.grid(True, alpha=0.25)
+    plt.legend()
+    plt.tight_layout()
+    plt.show()
+
+
+# ===============================================================
+# 8) SINGLE SPLIT PORTFOLIO CURVE (BLUE THEME)
+# ===============================================================
+def plot_single_split(port_series: pd.Series, title="Portfolio Value"):
+    plt.figure(figsize=(10, 5))
+    plt.plot(port_series.index, port_series.values, lw=1.8, color=BLUE)
+    plt.title(title)
+    plt.xlabel("Date")
+    plt.ylabel("Portfolio Value ($)")
+    plt.grid(True, alpha=0.25)
+    plt.tight_layout()
+    plt.show()
+
+
+# ===============================================================
+# 9) TEST VS VALIDATION (BLUE THEME)
+# ===============================================================
+def plot_test_validation(p_test: pd.Series, p_val: pd.Series):
+    plt.figure(figsize=(10, 5))
+    plt.plot(p_test.index, p_test.values, lw=1.6, color=BLUE, label="TEST")
+    plt.plot(p_val.index, p_val.values, lw=1.6, color=BLUE_LIGHT, label="VALIDATION")
+
+    plt.title("Test vs Validation Portfolio")
+    plt.xlabel("Date")
+    plt.ylabel("Portfolio Value ($)")
+    plt.grid(True, alpha=0.25)
+    plt.legend()
+    plt.tight_layout()
+    plt.show()
+
+
+# ===============================================================
+# 10) PORTFOLIO SPLITS (TRAIN/TEST/VALIDATION) BLUE THEME
+# ===============================================================
+def plot_portfolio_splits(port_train: pd.Series,
+                          port_test: pd.Series,
+                          port_val: pd.Series) -> None:
+
+    full_port = pd.concat([port_train, port_test, port_val])
+
+    t_start     = full_port.index[0]
+    t_train_end = port_train.index[-1]
+    t_test_end  = port_test.index[-1]
+    t_val_end   = port_val.index[-1]
+
+    plt.figure(figsize=(10, 5))
+
+    plt.axvspan(t_start, t_train_end, color=BLUE_SOFT,  alpha=0.12, label="Train (60%)")
+    plt.axvspan(t_train_end, t_test_end, color=BLUE_LIGHT, alpha=0.12, label="Test (20%)")
+    plt.axvspan(t_test_end, t_val_end, color=BLUE,       alpha=0.12, label="Validation (20%)")
+
+    plt.plot(full_port.index, full_port.values, lw=2.2, color=BLUE, label="Portfolio Value")
+
+    plt.title("Portfolio Value Evolution", fontsize=14, fontweight="bold")
+    plt.xlabel("Date")
+    plt.ylabel("Portfolio Value ($)")
+    plt.grid(True, alpha=0.25)
+    plt.legend(loc="upper left")
+    plt.tight_layout()
     plt.show()
