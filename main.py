@@ -1,7 +1,6 @@
+from prints import backtest_pair_splits
+from cointegration import selected_pair
 from data_processing import clean_data, dataset_split
-from visualization import plot_spread, plot_normalized_data
-
-from backtesting import backtest
 
 tickers = ['MSFT', 'TMO']
 
@@ -10,10 +9,11 @@ def main():
     data = clean_data(tickers, intervalo="15y")
     train, test, validation = dataset_split(data)
 
+    pair_train = selected_pair(train, tickers[0], tickers[1])
+    pair_test = selected_pair(test, tickers[0], tickers[1])
+    pair_val = selected_pair(validation, tickers[0], tickers[1])
 
-
-    plot_normalized_data(train)
-    plot_spread(train)
+    backtest_pair_splits(pair_train, pair_test, pair_val)
 
 
 if __name__ == "__main__":

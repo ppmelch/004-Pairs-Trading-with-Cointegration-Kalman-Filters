@@ -52,28 +52,51 @@ def select_pairs(prices: pd.DataFrame, corr_threshold: float = 0.7, adf_alpha: f
 
         data_pair = prices[[a, b]].dropna()
 
+        # ======================
+        # 1) OLS + ADF TEST
+        # ======================
         resid, adf_p, _ = OLS(data_pair)
 
+        # ======================
+        # 2) JOHANSEN TEST
+        # ======================
         joh = johansen_test(data_pair)
+
+        eigenvec = joh['eigenvectors']
+        beta1 = float(eigenvec[0])
+        beta2 = float(eigenvec[1])
+
+        # Normalización (beta2 = 1)
+        beta1_norm = beta1 / beta2
+        beta2_norm = 1.0
+
         joh_trace = float(joh['trace_stat'])
-        joh_crit95_r0 = float(joh['critical_values'][0])
-        johansen_coint = joh_trace > joh_crit95_r0
+        joh_crit = float(joh['critical_values'][0])
+        johansen_coint = joh_trace > joh_crit
 
         results.append({
             'Asset1': a,
             'Asset2': b,
             'Correlation': float(corr),
+
             'ADF_pvalue': adf_p,
             'ADF_Cointegrated': adf_p < adf_alpha,
+
             'Johansen_stat': joh_trace,
-            'Johansen_crit_95': joh_crit95_r0,
-            'Johansen_Cointegrated': johansen_coint
+            'Johansen_crit_95': joh_crit,
+            'Johansen_Cointegrated': johansen_coint,
+
+            'Eigenvector_1': beta1,
+            'Eigenvector_2': beta2,
+            'Beta1_norm': beta1_norm,
+            'Beta2_norm': beta2_norm
         })
 
     df = pd.DataFrame(results)
 
-    # RANKING 
-
+    # ======================
+    #       FILTRO
+    # ======================
     mask = (
         (df['ADF_pvalue'] < adf_alpha) &
         (df['Correlation'] >= corr_threshold) &
@@ -88,11 +111,36 @@ def select_pairs(prices: pd.DataFrame, corr_threshold: float = 0.7, adf_alpha: f
 
     buenos['Johansen_strength'] = buenos['Johansen_stat'] - buenos['Johansen_crit_95']
 
+    # ======================
+    #    ORDEN DE COLUMNAS
+    # ======================
+    columnas_ordenadas = [
+        'Asset1', 'Asset2',
+
+        'Correlation',
+
+        'ADF_pvalue', 'ADF_Cointegrated',
+
+        'Johansen_stat', 'Johansen_crit_95',
+        'Johansen_Cointegrated', 'Johansen_strength',
+
+        'Eigenvector_1', 'Eigenvector_2',
+        'Beta1_norm', 'Beta2_norm'
+    ]
+
+    buenos = buenos[columnas_ordenadas]
+
+    # ======================
+    #       RANKING
+    # ======================
     top5 = buenos.sort_values(
         by=['ADF_pvalue', 'Johansen_strength', 'Correlation'],
         ascending=[True, False, False]
-    ).reset_index(drop=True).head(10)
+    ).reset_index(drop=True).head()
 
     return top5
 
 
+def selected_pair (data: pd.DataFrame, asset1: str, asset2: str) -> pd.DataFrame:
+    pair_data = data[[asset1, asset2]].dropna()
+    return pair_data

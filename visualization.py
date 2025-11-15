@@ -1,6 +1,6 @@
 from libraries import *
 from classes import config 
-
+from kalman import KalmanFilter
 
 def plot_normalized_data(data: pd.DataFrame) -> None:
     norm_pair = (data - data.mean()) / data.std()
@@ -145,3 +145,17 @@ def plot_test_and_validation(test_series: pd.Series, val_series: pd.Series, titl
     plt.show()
 
 
+
+def plot_eigenvectores(data):
+    
+    # ===== KALMAN FILTERS =====
+    k1 = KalmanFilter(n=2)           # Hedge ratio
+    k2 = KalmanFilter(n=1)           # VECM smoothing
+
+    plt.figure(figsize=(12, 6))
+    plt.plot()
+    plt.title('Eigenvectors over Time')
+    plt.xlabel('Date')
+    plt.ylabel('Eigenvector Values')
+    plt.legend()
+    plt.show()
