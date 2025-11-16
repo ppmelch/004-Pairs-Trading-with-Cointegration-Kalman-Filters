@@ -1,10 +1,30 @@
-import numpy as np
-import pandas as pd
+from libraries import *
 from classes import config, Position
 from kalman import KalmanFilter
-from statsmodels.tsa.stattools import adfuller
+
 
 def get_portfolio_value(cash, longs, shorts, y, x):
+    """
+    Compute the current portfolio value by marking long and short positions to market.
+
+    Parameters
+    ----------
+    cash : float
+        Current cash balance.
+    longs : list
+        Active long positions.
+    shorts : list
+        Active short positions.
+    y : float
+        Latest price of asset Y.
+    x : float
+        Latest price of asset X.
+
+    Returns
+    -------
+    float
+        Mark-to-market portfolio value.
+    """
     value = cash
     for p in longs:
         px = y if p.ticker == "Y" else x
@@ -16,7 +36,33 @@ def get_portfolio_value(cash, longs, shorts, y, x):
 
 
 def backtest(data: pd.DataFrame, initial_cash=None):
+    """
+    Execute a Kalman-filter-based pairs trading backtest with dynamic hedge ratios,
+    VECM smoothing, rolling cointegration checks, and realistic transaction costs.
 
+    Parameters
+    ----------
+    data : pd.DataFrame
+        Two-asset price series ordered in time.
+    initial_cash : float, optional
+        Initial portfolio cash. If None, uses the value defined in config.
+
+    Returns
+    -------
+    tuple
+        (
+            equity_curve : pd.Series,
+            final_cash : float,
+            win_rate : float,
+            n_buy : int,
+            n_sell : int,
+            n_hold : int,
+            n_closed_positions : int,
+            closed_positions : list,
+            total_borrow_cost : float,
+            total_commission_cost : float
+        )
+    """
     data = data.copy()
     cash = config.capital if initial_cash is None else initial_cash
 
@@ -47,21 +93,17 @@ def backtest(data: pd.DataFrame, initial_cash=None):
         y = row.iloc[0]
         x = row.iloc[1]
 
-        # === 1. KF Hedge Ratio ===
         w_pred, P_pred = k_hr.predict()
         k_hr.update(np.array([1, x]), y, w_pred, P_pred)
         beta = k_hr.w_t[1]
 
-        # === 2. Spread ===
         spread = y - beta * x
 
-        # === 3. KF VECM ===
         wp, Pp = k_vecm.predict()
         k_vecm.update(np.array([1]), spread, wp, Pp)
         spr_hat = k_vecm.w_t[0]
         spread_history.append(spr_hat)
 
-        # === 4. Z-Score ===
         if len(spread_history) < WINDOW:
             equity.append(get_portfolio_value(cash, longs, shorts, y, x))
             continue
@@ -71,22 +113,18 @@ def backtest(data: pd.DataFrame, initial_cash=None):
         sd = sd if sd > 0 else 1e-6
         z = (spr_hat - mu) / sd
 
-        # === 5. Rolling Cointegration Protection ===
         recent = pd.Series(spread_history[-WINDOW:])
         adf_stat, pvalue, *_ = adfuller(recent)
         allow_entries = pvalue <= 0.05
 
-        # === 6. Borrow cost ===
         for p in shorts:
             px = y if p.ticker == "Y" else x
             daily_cost = p.n_shares * px * BR_daily
             cash -= daily_cost
             total_borrow_cost += daily_cost
 
-        # === 7. STOP LOSS ===
         if (longs or shorts) and abs(z) > STOP_Z:
 
-            # Close longs
             for p in longs[:]:
                 px = y if p.ticker == "Y" else x
                 com = p.n_shares * px * COM
@@ -101,7 +139,6 @@ def backtest(data: pd.DataFrame, initial_cash=None):
                 longs.remove(p)
                 sell += 1
 
-            # Close shorts
             for p in shorts[:]:
                 px = y if p.ticker == "Y" else x
                 com = p.n_shares * px * COM
@@ -119,10 +156,8 @@ def backtest(data: pd.DataFrame, initial_cash=None):
             equity.append(get_portfolio_value(cash, longs, shorts, y, x))
             continue
 
-        # === 8. EXIT SIGNAL ===
         if (longs or shorts) and abs(z) < EXIT_Z:
 
-            # Close longs
             for p in longs[:]:
                 px = y if p.ticker == "Y" else x
                 com = p.n_shares * px * COM
@@ -137,7 +172,6 @@ def backtest(data: pd.DataFrame, initial_cash=None):
                 longs.remove(p)
                 sell += 1
 
-            # Close shorts
             for p in shorts[:]:
                 px = y if p.ticker == "Y" else x
                 com = p.n_shares * px * COM
@@ -155,12 +189,10 @@ def backtest(data: pd.DataFrame, initial_cash=None):
             equity.append(get_portfolio_value(cash, longs, shorts, y, x))
             continue
 
-        # === 9. ENTRY ===
         if allow_entries and not longs and not shorts:
 
             capital_to_use = cash * INVEST
 
-            # Short Y / Long X
             if z > ENTRY_Z:
                 n = int(capital_to_use / (abs(y) + abs(beta * x)))
                 if n > 0:
@@ -178,7 +210,6 @@ def backtest(data: pd.DataFrame, initial_cash=None):
                         total_commission_cost += (comY + comX)
                         buy += 1
 
-            # Long Y / Short X
             elif z < -ENTRY_Z:
                 n = int(capital_to_use / (abs(y) + abs(beta * x)))
                 if n > 0:

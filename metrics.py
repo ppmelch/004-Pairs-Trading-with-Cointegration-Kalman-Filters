@@ -1,11 +1,21 @@
 from libraries import *
 
+
 class Metrics:
-    """Calcula métricas financieras sobre una serie de valores de portafolio."""
+    """
+    Collection of financial performance metrics for portfolio evaluation.
+    """
 
     @staticmethod
     def sharpe(data: pd.Series) -> float:
-        """Calcula el ratio de Sharpe anualizado."""
+        """
+        Compute annualized Sharpe ratio.
+
+        Returns
+        -------
+        float
+            Sharpe ratio value.
+        """
         if data is None or data.empty:
             return 0.0
         returns = data.pct_change().dropna()
@@ -13,27 +23,40 @@ class Metrics:
             return 0.0
         mean_ret = returns.mean()
         std_ret = returns.std()
-        annual_mean = mean_ret * np.sqrt(252)  # anualización diaria
+        annual_mean = mean_ret * np.sqrt(252)
         annual_std = std_ret * np.sqrt(252)
         return annual_mean / annual_std
 
     @staticmethod
     def sortino(data: pd.Series) -> float:
-        """Calcula el ratio de Sortino anualizado."""
+        """
+        Compute annualized Sortino ratio.
+
+        Returns
+        -------
+        float
+            Sortino ratio value.
+        """
         if data is None or data.empty:
             return 0.0
         returns = data.pct_change().dropna()
         downside = returns[returns < 0]
         if downside.std() == 0:
             return 0.0
-        mean_ret = returns.mean()
-        annual_mean = mean_ret * np.sqrt(252)
+        annual_mean = returns.mean() * np.sqrt(252)
         annual_downside = downside.std() * np.sqrt(252)
         return annual_mean / annual_downside
 
     @staticmethod
     def max_drawdown(data: pd.Series) -> float:
-        """Calcula el máximo drawdown (como valor positivo)."""
+        """
+        Compute the maximum drawdown value.
+
+        Returns
+        -------
+        float
+            Maximum drawdown as a positive value.
+        """
         if data is None or data.empty:
             return 0.0
         rolling_max = data.cummax()
@@ -42,7 +65,14 @@ class Metrics:
 
     @staticmethod
     def calmar(data: pd.Series) -> float:
-        """Calcula el ratio de Calmar: retorno anual / drawdown máximo."""
+        """
+        Compute the Calmar ratio (annual return / max drawdown).
+
+        Returns
+        -------
+        float
+            Calmar ratio value.
+        """
         if data is None or data.empty:
             return 0.0
         returns = data.pct_change().dropna()
@@ -52,13 +82,29 @@ class Metrics:
 
     @staticmethod
     def win_rate(data: pd.Series) -> float:
-        """Porcentaje de retornos positivos."""
+        """
+        Compute the percentage of positive daily returns.
+
+        Returns
+        -------
+        float
+            Win rate.
+        """
         if data is None or data.empty:
             return 0.0
         returns = data.pct_change().dropna()
         return (returns > 0).mean()
 
+
 def metrics(series):
+    """
+    Compute a set of portfolio evaluation metrics for a given equity curve.
+
+    Returns
+    -------
+    dict
+        Metrics summary.
+    """
     return {
         "Sharpe Ratio": Metrics.sharpe(series),
         "Sortino Ratio": Metrics.sortino(series),
@@ -67,10 +113,19 @@ def metrics(series):
         "Win Rate": Metrics.win_rate(series),
     }
 
-def trade_stadistics(positions,buy,sell,hold,total_borrow,total_comm):
+
+def trade_stadistics(positions, buy, sell, hold, total_borrow, total_comm):
+    """
+    Compute aggregated trading statistics from a list of closed positions.
+
+    Returns
+    -------
+    dict
+        Summary including counts, average wins/losses, and total costs.
+    """
     profits = [p.profit for p in positions]
-    wins = [p for p in profits if p>0]
-    losses = [p for p in profits if p<0]
+    wins = [p for p in profits if p > 0]
+    losses = [p for p in profits if p < 0]
     return {
         "# Trades": len(positions),
         "Operations": {"buy": buy, "sell": sell, "hold": hold},

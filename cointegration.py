@@ -1,29 +1,42 @@
 from libraries import *
-from itertools import combinations
 from classes import coint_config
 
 
-# =====================================================
-#   ROLLING CORRELATION
-# =====================================================
 def correlation(data: pd.DataFrame, window=coint_config.window):
     """
-    Rolling correlation entre dos activos.
+    Compute smoothed rolling correlation between two price series.
+
+    Parameters
+    ----------
+    data : pd.DataFrame
+        Two-column price dataset.
+    window : int
+        Window size for rolling correlation.
+
+    Returns
+    -------
+    pd.Series
+        Smoothed rolling correlation values.
     """
     data = data.copy()
     corr = data.iloc[:, 0].rolling(window).corr(data.iloc[:, 1])
     return corr.rolling(window).mean()
 
 
-# =====================================================
-#   OLS + ADF (Engle-Granger)
-# =====================================================
 def OLS(data: pd.DataFrame):
     """
-    Devuelve:
-        - residuales del spread (y - beta*x)
-        - p-value del ADF
-        - residuo medio
+    Perform Engle–Granger OLS regression to estimate the hedge ratio,
+    compute residuals of the spread, and evaluate stationarity via ADF.
+
+    Parameters
+    ----------
+    data : pd.DataFrame
+        Two-asset price series.
+
+    Returns
+    -------
+    tuple
+        (residuals, adf_pvalue, residual_mean)
     """
     data = data.copy().dropna()
 
@@ -39,42 +52,62 @@ def OLS(data: pd.DataFrame):
     return resid, adf_p, mean_resid
 
 
-# =====================================================
-#   JOHANSEN TEST
-# =====================================================
 def johansen_test(data: pd.DataFrame,
                   det_order=coint_config.det_order,
                   k_ar_diff=coint_config.k_ar_diff):
     """
-    Devuelve dict con:
-        - eigenvector (primero)
-        - valores críticos
-        - estadístico de trazas
+    Apply Johansen cointegration test and extract the dominant eigenvector,
+    trace statistic, and corresponding critical value.
+
+    Parameters
+    ----------
+    data : pd.DataFrame
+        Two-asset price data.
+    det_order : int
+        Deterministic trend specification.
+    k_ar_diff : int
+        Johansen VAR lag order.
+
+    Returns
+    -------
+    dict
+        {
+            'eigenvectors': np.ndarray,
+            'critical_values': np.ndarray,
+            'trace_stat': float
+        }
     """
     data = data.copy().dropna()
     res = coint_johansen(data, det_order, k_ar_diff)
 
     return {
-        'eigenvectors': res.evec[:, 0],        # vector propio dominante
-        'critical_values': res.cvt[:, 1],      # valores críticos 5%
-        'trace_stat': res.lr1[0]               # estadístico trace
+        'eigenvectors': res.evec[:, 0],
+        'critical_values': res.cvt[:, 1],
+        'trace_stat': res.lr1[0]
     }
 
 
-# =====================================================
-#   SELECCIÓN DE PARES
-# =====================================================
 def select_pairs(prices: pd.DataFrame,
                  corr_threshold: float = 0.7,
                  adf_alpha: float = 0.05):
     """
-    Para cada pareja:
-        - calcula correlación
-        - corre Engle-Granger
-        - corre Johansen
-        - normaliza eigenvector
-    """
+    Evaluate all asset pairs and select those satisfying correlation,
+    Engle–Granger, and Johansen cointegration requirements.
 
+    Parameters
+    ----------
+    prices : pd.DataFrame
+        Historical price matrix.
+    corr_threshold : float
+        Minimum acceptable correlation.
+    adf_alpha : float
+        Maximum ADF p-value allowed.
+
+    Returns
+    -------
+    pd.DataFrame
+        Ranked table of cointegrated pairs and statistics.
+    """
     results = []
     corr_matrix = prices.corr()
 
@@ -86,16 +119,12 @@ def select_pairs(prices: pd.DataFrame,
 
         data_pair = prices[[a, b]].dropna()
 
-        # ========== OLS + ADF ==========
         resid, adf_p, _ = OLS(data_pair)
-
-        # ========== JOHANSEN ==========
         joh = johansen_test(data_pair)
 
         eig = joh['eigenvectors']
         beta1, beta2 = float(eig[0]), float(eig[1])
 
-        # Normalización (beta2 = 1)
         beta1_norm = beta1 / beta2 if beta2 != 0 else np.nan
         beta2_norm = 1.0
 
@@ -107,19 +136,15 @@ def select_pairs(prices: pd.DataFrame,
             'Asset1': a,
             'Asset2': b,
             'Correlation': float(corr),
-
             'ADF_pvalue': adf_p,
             'ADF_Cointegrated': adf_p < adf_alpha,
-
             'Johansen_stat': joh_trace,
             'Johansen_crit_95': joh_crit,
             'Johansen_Cointegrated': johansen_ok,
-
             'Eigenvector_1': beta1,
             'Eigenvector_2': beta2,
             'Beta1_norm': beta1_norm,
             'Beta2_norm': beta2_norm,
-
             'Johansen_strength': joh_trace - joh_crit
         })
 
@@ -127,7 +152,6 @@ def select_pairs(prices: pd.DataFrame,
     if df.empty:
         return df
 
-    # FILTRO estricto
     mask = (
         (df['Correlation'] >= corr_threshold) &
         (df['ADF_pvalue'] < adf_alpha) &
@@ -139,7 +163,6 @@ def select_pairs(prices: pd.DataFrame,
     if selected.empty:
         return selected
 
-    # Ranking final
     selected = selected.sort_values(
         by=['ADF_pvalue', 'Johansen_strength', 'Correlation'],
         ascending=[True, False, False]
@@ -148,8 +171,22 @@ def select_pairs(prices: pd.DataFrame,
     return selected
 
 
-# =====================================================
-#   SELECCIONA DOS ACTIVOS
-# =====================================================
 def selected_pair(data: pd.DataFrame, asset1: str, asset2: str) -> pd.DataFrame:
+    """
+    Extract a clean two-asset price series for a chosen pair.
+
+    Parameters
+    ----------
+    data : pd.DataFrame
+        Full price matrix.
+    asset1 : str
+        First asset ticker.
+    asset2 : str
+        Second asset ticker.
+
+    Returns
+    -------
+    pd.DataFrame
+        Two-column price series for the pair.
+    """
     return data[[asset1, asset2]].dropna()

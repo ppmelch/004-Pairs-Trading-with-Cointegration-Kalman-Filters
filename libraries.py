@@ -11,7 +11,7 @@ import pandas as pd
 import scipy as sp
 import yfinance as yf
 import statsmodels.api as sm
-from statsmodels.tsa.stattools import adfuller 
+from statsmodels.tsa.stattools import adfuller
 from statsmodels.tsa.vector_ar.vecm import coint_johansen
 
 # --- Third-party libraries: Visualization ---
@@ -24,6 +24,7 @@ from IPython.display import display
 
 # --- Type hints ---
 from typing import List
+from itertools import combinations
 
 np.random.seed(42)
 
@@ -38,6 +39,16 @@ plt.rcParams['axes.labelsize'] = 12
 plt.rcParams['legend.frameon'] = True
 plt.rcParams['legend.facecolor'] = 'white'
 plt.rcParams['legend.edgecolor'] = 'black'
+
+# =============================
+# COLORS
+# =============================
+BLUE        = "#1D4782"
+BLUE_LIGHT  = "#5A78A1"
+BLUE_SOFT   = "#A9BBD6"
+RED_SOFT    = "#EA6767"
+
+sns.set_style("whitegrid")
 
 
 colors = ["cornflowerblue", "indianred", "darkseagreen", "plum", "dimgray"]
