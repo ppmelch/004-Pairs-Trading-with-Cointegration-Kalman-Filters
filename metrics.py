@@ -58,6 +58,15 @@ class Metrics:
         returns = data.pct_change().dropna()
         return (returns > 0).mean()
 
+def metrics(series):
+    return {
+        "Sharpe Ratio": Metrics.sharpe(series),
+        "Sortino Ratio": Metrics.sortino(series),
+        "Maximum Drawdown": Metrics.max_drawdown(series),
+        "Calmar Ratio": Metrics.calmar(series),
+        "Win Rate": Metrics.win_rate(series),
+    }
+
 def trade_stadistics(positions,buy,sell,hold,total_borrow,total_comm):
     profits = [p.profit for p in positions]
     wins = [p for p in profits if p>0]
