@@ -37,23 +37,6 @@ pip install numpy pandas scipy statsmodels yfinance seaborn matplotlib ta
 
 ------------------------------------------------------------------------
 
-# 📌 Project Overview
-
-This project implements a **statistical arbitrage pairs trading
-strategy** using:
-
--   Correlation, Engle--Granger & Johansen cointegration\
--   Two Kalman Filters (dynamic hedge ratio + smoothed spread)\
--   Z-score mean reversion\
--   Sequential Decision Analysis (SDA)\
--   Realistic backtesting (commissions, borrow, slippage)
-
-The system updates the hedge ratio and spread through Kalman filters,
-validates cointegration in real-time, and makes daily decisions to
-open/close positions.
-
-------------------------------------------------------------------------
-
 # 🧩 System Architecture
 
     ├── libraries.py
@@ -67,151 +50,168 @@ open/close positions.
     ├── classes.py
     ├── prints.py
     ├── visualization.py
-    ├── rquirements.txt
+    ├── requirements.txt
     └── README.md
-    
 
 ------------------------------------------------------------------------
 
-# 🔍 Methodology
+# 📌 Project Overview
 
-## 1. Data Cleaning
-
-15 years of daily prices downloaded via yfinance and aligned.
-
-## 2. Pair Selection
-
-### ✓ Correlation (\> 0.7)
-
-### ✓ Engle--Granger (OLS + ADF)
-
-Cointegration if ADF p-value \< 0.05.
-
-### ✓ Johansen Test
-
-Uses trace statistic and eigenvectors to confirm long‑run equilibrium.
-
-Pairs ranked by:
-
-1.  ADF p-value\
-2.  Johansen strength\
-3.  Correlation
+This project develops a complete statistical arbitrage system using
+pairs trading, cointegration testing, Kalman filters, and Sequential
+Decision Analysis (SDA). The strategy identifies long-run equilibrium
+relationships, monitors deviations in the spread, and executes dynamic
+market-neutral positions based on Z-score signals.
 
 ------------------------------------------------------------------------
 
-# ⚙️ Kalman Filters + SDA
+# 🎯 Objectives
 
-## Kalman Filter 1 --- Dynamic Hedge Ratio βₜ
-
-Updates intercept & slope daily:\
-\[ s_t = y_t - `\beta`{=tex}\_t x_t \]
-
-## Kalman Filter 2 --- Smoothed Spread ( `\hat{s}`{=tex}\_t  )
-
-Removes noise and is used for Z-score and rolling ADF.
-
-## System State
-
-\[ S_t = (`\beta`{=tex}\_t, `\hat{s}`{=tex}\_t, P\^`\beta`{=tex}*t,
-P\^s_t, spread*{t-20:t}, cap_t, pos_t) \]
+-   Identify cointegrated equity pairs using rigorous statistical tests\
+-   Implement Kalman Filters as dynamic state-space models\
+-   Build a dynamic hedging, market-neutral strategy\
+-   Evaluate performance with real transaction costs and borrow fees\
+-   Maintain modular, clean, fully documented Python code\
+-   Provide full analysis including Required Charts and Performance
+    Metrics
 
 ------------------------------------------------------------------------
 
-# 🧮 Trading Logic
+# 🧠 Key Concepts
 
-### Entry
-
--   Short if Z \> 1.0\
--   Long if Z \< --1.0\
--   Only if rolling ADF \< 0.05
-
-### Exit
-
--   \|Z\| \< 0.5
-
-### Stop-loss
-
--   \|Z\| \> 3.5
-
-### Costs
-
--   0.125% per leg\
--   Borrow BR/252
-
-### Capital
-
--   Uses 80% of capital, market‑neutral\
--   Share sizing respects βₜ
+-   **Cointegration**\
+-   **Mean Reversion**\
+-   **Dynamic Hedging via Kalman Filters**\
+-   **VECM Error Correction**\
+-   **SDA Sequential Decision Modeling**\
+-   **Market Neutrality**
 
 ------------------------------------------------------------------------
 
-# 📊 Backtesting Setup
+# 🛠 Technical Requirements
 
-Dataset split:
+### Data
 
--   60% Train\
--   20% Test\
--   20% Validation
+-   15 years of daily price data\
+-   60/20/20 chronological split\
+-   No look-ahead bias
 
-Daily loop:
+### Trading Costs
 
-1.  Update Kalman filters\
-2.  Compute spread & z-score\
-3.  Validate cointegration\
-4.  SDA decision\
-5.  Apply costs\
-6.  Update equity
+-   0.125% commission per leg\
+-   0.25% annual borrow rate\
+-   80% capital deployment
 
 ------------------------------------------------------------------------
 
-# 📈 Results
+# 🔍 Pair Selection Strategy
 
-## TRAIN (60%)
-
--   Final capital: **\$881,509.97**
--   Return: **--11.85%**
--   Sharpe: **--0.1627**
--   Sortino: **--0.0723**
--   Max Drawdown: **25.6%**
--   Win Rate: **4.29%**
+1.  Correlation screening (\>0.7)\
+2.  Engle--Granger regression + ADF on residuals\
+3.  Johansen cointegration test\
+4.  Final selection based on correlation + ADF p-value + Johansen
+    strength
 
 ------------------------------------------------------------------------
 
-## TEST (20%)
+# 🤖 Kalman Filter Implementation
 
--   Final capital: **\$1,538,861**
--   Return: **53.89%**
--   Sharpe: **1.128**
--   Sortino: **0.7206**
--   Max Drawdown: **8.78%**
--   Profit: **\$582,116**
+Two Kalman Filters:
 
-------------------------------------------------------------------------
+### **KF1 -- Dynamic Hedge Ratio βₜ**
 
-## VALIDATION (20%)
+Produces: - Intercept\
+- Dynamic hedge ratio\
+- Raw spread: `s_t = y_t - β_t x_t`
 
--   Final capital: **\$2,077,107**
--   Return: **34.98%**
--   Sharpe: **0.8557**
--   Sortino: **0.9342**
--   Max Drawdown: **23.94%**
--   Profit: **\$585,169**
+### \*\*KF2 -- Smoothed Spread `\hat{s}`{=tex}\_t\*\*
+
+Produces stable spread used for signals and ADF rolling validation.
 
 ------------------------------------------------------------------------
 
-# 🚀 Combined Out‑of‑Sample (Test + Validation)
+# 🔄 Sequential Decision Analysis (SDA)
 
-Strong upward equity curve, resilience, and robust generalization.
+The full system is modeled under Powell's SDA:
+
+State:\
+\[ S_t = (β_t, `\hat{s}`{=tex}*t, P\^β_t, P\^s_t, spread*{t-20:t},
+cap_t, pos_t) \]
+
+Decisions: - open_long\
+- open_short\
+- close\
+- hold
+
+------------------------------------------------------------------------
+
+# 📈 Trading Strategy Logic
+
+Entry:\
+- Long if Z \< -1\
+- Short if Z \> 1\
+- Only if ADF p ≤ 0.05
+
+Exit:\
+- \|Z\| \< 0.5
+
+Stop-loss:\
+- \|Z\| \> 3.5
+
+Position Size: \[ n_t = `\left`{=tex}`\lfloor `{=tex}rac{0.80
+`\cdot `{=tex}cap_t}{\|y_t\| + \|β_t x_t\|} ightfloor \]
+
+------------------------------------------------------------------------
+
+# 📉 Backtesting Requirements
+
+-   Daily hedge update\
+-   Smoothed spread update\
+-   Commission and borrow integration\
+-   Train/Test/Validation evaluation\
+-   Full trade logs
+
+------------------------------------------------------------------------
+
+# 📊 Results Summary (GOOGL--HD)
+
+### Train
+
+-   -11.85%\
+-   \$881,509 final\
+-   Sharpe -0.1627
+
+### Test
+
+-   +53.89%\
+-   \$1,538,861\
+-   Sharpe 1.128
+
+### Validation
+
+-   +34.98%\
+-   \$2,077,107\
+-   Sharpe 0.8557
+
+### Combined Out-of-Sample
+
+Strong, robust, resilient performance.
 
 ------------------------------------------------------------------------
 
 # 🧾 Conclusions
 
--   The strategy becomes profitable after training.\
--   GOOGL--HD exhibits extremely strong cointegration.\
--   Low win rate but large winners dominate losses.\
--   Robust in out‑of‑sample performance.\
--   Improvements: adaptive thresholds, regime detection, more pairs, ML
-    validation.
+-   The system is theoretically consistent and statistically grounded\
+-   Out-of-sample performance is strong\
+-   Low win-rate offset by large tail winners\
+-   Costs are fully absorbed\
+-   Possible improvements: adaptive thresholds, regime detection,
+    ML-signal validation
 
 ------------------------------------------------------------------------
+
+# 🚀 Run
+
+``` bash
+python main.py
+```
