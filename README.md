@@ -1,4 +1,4 @@
-# 🧠 004 Pairs Trading with Cointegration & Kalman Filters
+#  004 Pairs Trading with Cointegration & Kalman Filters
 ### ITESO — Market Microstructure and Trading Systems  
 **Autores:**  
 - José Armando Melchor Soto  
@@ -6,7 +6,7 @@
 
 ------------------------------------------------------------------------
 
-# 📥 Installation & Requirements
+#  Installation & Requirements
 
 Clone the repository:
 
@@ -37,7 +37,7 @@ pip install numpy pandas scipy statsmodels yfinance seaborn matplotlib ta
 
 ------------------------------------------------------------------------
 
-# 🧩 System Architecture
+#  System Architecture
 
     ├── libraries.py
     ├── main.py
@@ -55,7 +55,7 @@ pip install numpy pandas scipy statsmodels yfinance seaborn matplotlib ta
 
 ------------------------------------------------------------------------
 
-# 📌 Project Overview
+#  Project Overview
 
 This project develops a complete statistical arbitrage system using
 pairs trading, cointegration testing, Kalman filters, and Sequential
@@ -65,7 +65,7 @@ market-neutral positions based on Z-score signals.
 
 ------------------------------------------------------------------------
 
-# 🎯 Objectives
+#  Objectives
 
 -   Identify cointegrated equity pairs using rigorous statistical tests\
 -   Implement Kalman Filters as dynamic state-space models\
@@ -77,7 +77,7 @@ market-neutral positions based on Z-score signals.
 
 ------------------------------------------------------------------------
 
-# 🧠 Key Concepts
+#  Key Concepts
 
 -   **Cointegration**\
 -   **Mean Reversion**\
@@ -88,7 +88,7 @@ market-neutral positions based on Z-score signals.
 
 ------------------------------------------------------------------------
 
-# 🛠 Technical Requirements
+#  Technical Requirements
 
 ### Data
 
@@ -104,7 +104,7 @@ market-neutral positions based on Z-score signals.
 
 ------------------------------------------------------------------------
 
-# 🔍 Pair Selection Strategy
+#  Pair Selection Strategy
 
 1.  Correlation screening (\>0.7)\
 2.  Engle--Granger regression + ADF on residuals\
@@ -114,7 +114,7 @@ market-neutral positions based on Z-score signals.
 
 ------------------------------------------------------------------------
 
-# 🤖 Kalman Filter Implementation
+#  Kalman Filter Implementation
 
 Two Kalman Filters:
 
@@ -130,7 +130,7 @@ Produces stable spread used for signals and ADF rolling validation.
 
 ------------------------------------------------------------------------
 
-# 🔄 Sequential Decision Analysis (SDA)
+#  Sequential Decision Analysis (SDA)
 
 The full system is modeled under Powell's SDA:
 
@@ -145,7 +145,7 @@ Decisions: - open_long\
 
 ------------------------------------------------------------------------
 
-# 📈 Trading Strategy Logic
+#  Trading Strategy Logic
 
 Entry:\
 - Long if Z \< -1\
@@ -163,7 +163,7 @@ Position Size: \[ n_t = `\left`{=tex}`\lfloor `{=tex}rac{0.80
 
 ------------------------------------------------------------------------
 
-# 📉 Backtesting Requirements
+#  Backtesting Requirements
 
 -   Daily hedge update\
 -   Smoothed spread update\
@@ -173,7 +173,7 @@ Position Size: \[ n_t = `\left`{=tex}`\lfloor `{=tex}rac{0.80
 
 ------------------------------------------------------------------------
 
-# 📊 Results Summary (GOOGL--HD)
+#  Results Summary (GOOGL--HD)
 
 ### Train
 
@@ -199,7 +199,7 @@ Strong, robust, resilient performance.
 
 ------------------------------------------------------------------------
 
-# 🧾 Conclusions
+#  Conclusions
 
 -   The system is theoretically consistent and statistically grounded\
 -   Out-of-sample performance is strong\
@@ -210,7 +210,7 @@ Strong, robust, resilient performance.
 
 ------------------------------------------------------------------------
 
-# 🚀 Run
+#  Run
 
 ``` bash
 python main.py
